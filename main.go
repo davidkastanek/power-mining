@@ -6,11 +6,11 @@ import (
 	"github.com/achetronic/tapogo/api/types"
 	"github.com/achetronic/tapogo/pkg/tapogo"
 	"gopkg.in/yaml.v3"
-	"log"
 	"os"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -31,7 +31,7 @@ type Config struct {
 	Thresholds struct {
 		MaxTemp      float64 `yaml:"maxTemp"`
 		MaxLoad      float64 `yaml:"maxLoad"`
-		MinTuvSoC    float64 `yaml:"mfloat64uvSoC"`
+		MinTuvSoC    float64 `yaml:"minTuvSoC"`
 		MinPanels    float64 `yaml:"minPanels"`
 		MaxSoC       float64 `yaml:"maxSoC"`
 		MaxSoCNil    float64 `yaml:"maxSoCNil"`
@@ -150,16 +150,29 @@ func getTuvTemp(client influxdb2.Client, org string) (float64, error) {
 			  |> yield(name: "mean")`)
 }
 
-func main() {
-	// Read YAML config file
-	file, err := os.ReadFile("config.yaml")
+func getConfigFromYaml(filename string) (*Config, error) {
+	// Read the YAML file
+	file, err := os.ReadFile(filename)
 	if err != nil {
-		log.Fatalf("Failed to read YAML file: %v", err)
+		return nil, fmt.Errorf("error reading config file: %v", err)
 	}
 
-	// Unmarshal YAML into Config struct
+	// Unmarshal the YAML into a Config struct
 	var config Config
 	err = yaml.Unmarshal(file, &config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse YAML: %v", err)
+	}
+
+	return &config, nil
+}
+
+func main() {
+	log.SetFormatter(&log.TextFormatter{
+		FullTimestamp: true,
+	})
+
+	config, err := getConfigFromYaml("config.yaml")
 	if err != nil {
 		log.Fatalf("Failed to parse YAML: %v", err)
 	}
@@ -213,13 +226,25 @@ func main() {
 			(tuvPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) ||
 			(!tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) ||
 			(tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) {
-			log.Printf("TUV: ON - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
+			log.WithFields(log.Fields{
+				"PlugState": tuvPlugState,
+				"SoC":       batterySoC,
+				"L3 Load":   loadL3,
+				"Temp":      tuvTemp,
+				"Panels":    pvPower,
+			}).Info("TUV: ON")
 			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.Printf("TUV: OFF - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
+			log.WithFields(log.Fields{
+				"PlugState": tuvPlugState,
+				"SoC":       batterySoC,
+				"L3 Load":   loadL3,
+				"Temp":      tuvTemp,
+				"Panels":    pvPower,
+			}).Info("TUV: OFF")
 			_, err = controlPlug(turnOffAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
@@ -243,13 +268,23 @@ func main() {
 			(!tuvPlugState && heaterPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels) ||
 			(!tuvPlugState && !heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels) ||
 			(!tuvPlugState && heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels) {
-			log.Printf("HEATER: ON - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", heaterPlugState, batterySoC, loadL2, pvPower)
+			log.WithFields(log.Fields{
+				"PlugState": heaterPlugState,
+				"SoC":       batterySoC,
+				"L2 Load":   loadL2,
+				"Panels":    pvPower,
+			}).Info("HEATER: ON")
 			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.Printf("HEATER: OFF - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", heaterPlugState, batterySoC, loadL2, pvPower)
+			log.WithFields(log.Fields{
+				"PlugState": heaterPlugState,
+				"SoC":       batterySoC,
+				"L2 Load":   loadL2,
+				"Panels":    pvPower,
+			}).Info("HEATER: OFF")
 			_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
