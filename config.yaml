@@ -1,0 +1,13 @@
+influxdb:
+  url: http://192.168.88.186:8086
+  token: yFyR1p7hKO6x593dTTgAJxjXAd43Oskh84sHBFNGpge7HK6IACyqsm2NXQuBk0eIfDf8FilT3jn4HUImICFF4w==
+  org: kastankovi.cz
+  bucket: homeassistant
+tapo:
+  email: kastanekdavid@gmail.com
+  pass: gQ0$zCN9F@5sdk
+  plugs:
+    - name: heater
+      ip: 192.168.88.111
+    - name: tuv
+      ip: 192.168.88.117
