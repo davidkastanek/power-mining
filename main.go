@@ -124,17 +124,17 @@ func main() {
 			log.Fatalf("Error querying InfluxDB: %v", err)
 		}
 
-		//loadL2, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-		//	from(bucket: "homeassistant")
-		//	  |> range(start: -1h)
-		//	  |> filter(fn: (r) => r["entity_id"] == "load_l2")
-		//	  |> filter(fn: (r) => r["_field"] == "value")
-		//	  |> filter(fn: (r) => r["_measurement"] == "W")
-		//	  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-		//	  |> yield(name: "mean")`)
-		//if err != nil {
-		//	log.Fatalf("Error querying InfluxDB: %v", err)
-		//}
+		loadL2, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
+			from(bucket: "homeassistant")
+			  |> range(start: -1h)
+			  |> filter(fn: (r) => r["entity_id"] == "load_l2")
+			  |> filter(fn: (r) => r["_field"] == "value")
+			  |> filter(fn: (r) => r["_measurement"] == "W")
+			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+			  |> yield(name: "mean")`)
+		if err != nil {
+			log.Fatalf("Error querying InfluxDB: %v", err)
+		}
 
 		loadL3, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
 			from(bucket: "homeassistant")
@@ -176,31 +176,41 @@ func main() {
 		var turnOnAction action = "TurnOn"
 		var turnOffAction action = "TurnOff"
 		var deviceInfoAction action = "DeviceInfo"
-		const COOLDOWN = 3
+		const cooldown = 3
 
 		var tuvPlugCredentials = plugCredentials{
 			ip:       config.Tapo.Plugs[1].IP,
 			email:    config.Tapo.Email,
 			password: config.Tapo.Password,
 		}
-		tuvPlugInfo, err := controlPlug(deviceInfoAction, tuvPlugCredentials, COOLDOWN)
+		tuvPlugInfo, err := controlPlug(deviceInfoAction, tuvPlugCredentials, cooldown)
 		if err != nil {
 			log.Fatalf("Error getting device info: %v", err)
 		}
 		tuvPlugState := plugIsOn(tuvPlugInfo)
 
-		if (!tuvPlugState && (batterySoC == 0 || batterySoC == 100) && loadL3 < 1000 && tuvTemp < 67) ||
-			(tuvPlugState && (batterySoC == 0 || batterySoC == 100) && loadL3 < 3000 && pvPower > 2000 && tuvTemp < 67) ||
-			(!tuvPlugState && batterySoC > 40 && loadL3 < 1000 && pvPower > 2000 && tuvTemp < 67) ||
-			(tuvPlugState && batterySoC > 40 && loadL3 < 3000 && pvPower > 2000 && tuvTemp < 67) {
-			fmt.Printf("%v TUV: ON - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", time.Now().Format("2006-01-02 15:04:05"), tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
-			_, err = controlPlug(turnOnAction, tuvPlugCredentials, COOLDOWN)
+		const (
+			maxTemp   = 67
+			maxLoad   = 3000
+			minTuvSoC = 40
+			minPanels = 2000
+			maxSoC    = 100
+			maxSoCNil = 0
+			loadIdle  = 1000
+		)
+
+		if (!tuvPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL3 < loadIdle && tuvTemp < maxTemp) ||
+			(tuvPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL3 < maxLoad && pvPower > minPanels && tuvTemp < maxTemp) ||
+			(!tuvPlugState && batterySoC > minTuvSoC && loadL3 < loadIdle && pvPower > minPanels && tuvTemp < maxTemp) ||
+			(tuvPlugState && batterySoC > minTuvSoC && loadL3 < maxLoad && pvPower > minPanels && tuvTemp < maxTemp) {
+			log.Printf("TUV: ON - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
+			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			fmt.Printf("%v TUV: OFF - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", time.Now().Format("2006-01-02 15:04:05"), tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
-			_, err = controlPlug(turnOffAction, tuvPlugCredentials, COOLDOWN)
+			log.Printf("TUV: OFF - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
+			_, err = controlPlug(turnOffAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
 			}
@@ -208,33 +218,37 @@ func main() {
 
 		time.Sleep(150 * time.Second)
 
-		//var heaterPlugCredentials = plugCredentials{
-		//	ip:       config.Tapo.Plugs[0].IP,
-		//	email:    config.Tapo.Email,
-		//	password: config.Tapo.Password,
-		//}
-		//heaterPlugInfo, err := controlPlug(deviceInfoAction, heaterPlugCredentials, COOLDOWN)
-		//if err != nil {
-		//	log.Fatalf("Error getting device info: %v", err)
-		//}
-		//heaterPlugState := plugIsOn(heaterPlugInfo)
-		//
-		//if (!tuvPlugState && !heaterPlugState && (batterySoC == 0 || batterySoC == 100) && loadL2 < 1000) ||
-		//	(!tuvPlugState && heaterPlugState && (batterySoC == 0 || batterySoC == 100) && loadL2 < 3000 && pvPower > 2000) ||
-		//	(!tuvPlugState && !heaterPlugState && batterySoC > 60 && loadL2 < 1000 && pvPower > 2000) ||
-		//	(!tuvPlugState && heaterPlugState && batterySoC > 60 && loadL2 < 3000 && pvPower > 2000) {
-		//	fmt.Printf("%v HEATER: ON - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", time.Now().Format("2006-01-02 15:04:05"), heaterPlugState, batterySoC, loadL2, pvPower)
-		//	_, err = controlPlug(turnOnAction, heaterPlugCredentials, COOLDOWN)
-		//	if err != nil {
-		//		log.Fatalf("Error turning on plug: %v", err)
-		//	}
-		//} else {
-		//	fmt.Printf("%v HEATER: OFF - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", time.Now().Format("2006-01-02 15:04:05"), heaterPlugState, batterySoC, loadL2, pvPower)
-		//	_, err = controlPlug(turnOffAction, heaterPlugCredentials, COOLDOWN)
-		//	if err != nil {
-		//		log.Fatalf("Error turning off plug: %v", err)
-		//	}
-		//}
+		var heaterPlugCredentials = plugCredentials{
+			ip:       config.Tapo.Plugs[0].IP,
+			email:    config.Tapo.Email,
+			password: config.Tapo.Password,
+		}
+		heaterPlugInfo, err := controlPlug(deviceInfoAction, heaterPlugCredentials, cooldown)
+		if err != nil {
+			log.Fatalf("Error getting device info: %v", err)
+		}
+		heaterPlugState := plugIsOn(heaterPlugInfo)
+
+		const (
+			minHeaterSoC = 60
+		)
+
+		if (!tuvPlugState && !heaterPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL2 < loadIdle) ||
+			(!tuvPlugState && heaterPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL2 < maxLoad && pvPower > minPanels) ||
+			(!tuvPlugState && !heaterPlugState && batterySoC > minHeaterSoC && loadL2 < loadIdle && pvPower > minPanels) ||
+			(!tuvPlugState && heaterPlugState && batterySoC > minHeaterSoC && loadL2 < maxLoad && pvPower > minPanels) {
+			log.Printf("HEATER: ON - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", heaterPlugState, batterySoC, loadL2, pvPower)
+			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
+			if err != nil {
+				log.Fatalf("Error turning on plug: %v", err)
+			}
+		} else {
+			log.Printf("HEATER: OFF - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", heaterPlugState, batterySoC, loadL2, pvPower)
+			_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
+			if err != nil {
+				log.Fatalf("Error turning off plug: %v", err)
+			}
+		}
 
 		time.Sleep(150 * time.Second)
 	}
