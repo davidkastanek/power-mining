@@ -11,3 +11,12 @@ tapo:
       ip: 192.168.88.111
     - name: tuv
       ip: 192.168.88.117
+thresholds:
+  maxTemp: 67 # max temperature to which water is heated
+  maxLoad: 3000 # max power per electrical phase
+  minTuvSoC: 40 # min SoC percentage for water to start being heated
+  minPanels: 2000 # min power available from solar panels
+  maxSoC: 100 # max percentage value for SoC
+  maxSoCNil: 0 # max value for SoC when metric not available
+  loadIdle: 1000 # max active power on electrical phase for that phase to be considered available for more load
+  minHeaterSoC: 60 # min SoC percentage for power being considered to be sent to the air heater

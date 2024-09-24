@@ -28,6 +28,16 @@ type Config struct {
 			IP   string `yaml:"ip"`
 		} `yaml:"plugs"`
 	} `yaml:"tapo"`
+	Thresholds struct {
+		MaxTemp      float64 `yaml:"maxTemp"`
+		MaxLoad      float64 `yaml:"maxLoad"`
+		MinTuvSoC    float64 `yaml:"mfloat64uvSoC"`
+		MinPanels    float64 `yaml:"minPanels"`
+		MaxSoC       float64 `yaml:"maxSoC"`
+		MaxSoCNil    float64 `yaml:"maxSoCNil"`
+		LoadIdle     float64 `yaml:"loadIdle"`
+		MinHeaterSoC float64 `yaml:"minHeaterSoC"`
+	}
 }
 
 type plugCredentials struct {
@@ -94,6 +104,52 @@ func queryInfluxDB(client influxdb2.Client, org string, fluxQuery string) (float
 	return value, nil
 }
 
+func getBatterySoC(client influxdb2.Client, org string) (float64, error) {
+	return queryInfluxDB(client, org, `
+			from(bucket: "homeassistant")
+			  |> range(start: -1h)
+			  |> filter(fn: (r) => r["entity_id"] == "battery_state_of_charge")
+			  |> filter(fn: (r) => r["_field"] == "value")
+			  |> filter(fn: (r) => r["_measurement"] == "%")
+			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+			  |> yield(name: "mean")`)
+}
+
+func getLoad(client influxdb2.Client, org string, line string) (float64, error) {
+	query := fmt.Sprintf(`
+		from(bucket: "homeassistant")
+		|> range(start: -1h)
+		|> filter(fn: (r) => r["entity_id"] == "load_%s")
+		|> filter(fn: (r) => r["_field"] == "value")
+		|> filter(fn: (r) => r["_measurement"] == "W")
+		|> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+		|> yield(name: "mean")`, line)
+	return queryInfluxDB(client, org, query)
+}
+
+func getPvPower(client influxdb2.Client, org string) (float64, error) {
+	return queryInfluxDB(client, org, `
+			from(bucket: "homeassistant")
+			  |> range(start: -1h)
+			  |> filter(fn: (r) => r["entity_id"] == "pv_power")
+			  |> filter(fn: (r) => r["_field"] == "value")
+			  |> filter(fn: (r) => r["_measurement"] == "W")
+			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+			  |> yield(name: "mean")`)
+}
+
+func getTuvTemp(client influxdb2.Client, org string) (float64, error) {
+	return queryInfluxDB(client, org, `
+			from(bucket: "homeassistant")
+			  |> range(start: -1h)
+			  |> filter(fn: (r) => r["domain"] == "sensor")
+			  |> filter(fn: (r) => r["entity_id"] == "shellyplus1_e465b842dc6c_temperature_2")
+			  |> filter(fn: (r) => r["_field"] == "value")
+			  |> filter(fn: (r) => r["_measurement"] == "°C")
+			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+			  |> yield(name: "mean")`)
+}
+
 func main() {
 	// Read YAML config file
 	file, err := os.ReadFile("config.yaml")
@@ -112,65 +168,29 @@ func main() {
 	defer influxClient.Close()
 
 	for {
-		batterySoC, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-			from(bucket: "homeassistant")
-			  |> range(start: -1h)
-			  |> filter(fn: (r) => r["entity_id"] == "battery_state_of_charge")
-			  |> filter(fn: (r) => r["_field"] == "value")
-			  |> filter(fn: (r) => r["_measurement"] == "%")
-			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-			  |> yield(name: "mean")`)
+		batterySoC, err := getBatterySoC(influxClient, config.InfluxDB.Org)
 		if err != nil {
-			log.Fatalf("Error querying InfluxDB: %v", err)
+			log.Fatalf("Error getting batterySoC: %v", err)
 		}
 
-		loadL2, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-			from(bucket: "homeassistant")
-			  |> range(start: -1h)
-			  |> filter(fn: (r) => r["entity_id"] == "load_l2")
-			  |> filter(fn: (r) => r["_field"] == "value")
-			  |> filter(fn: (r) => r["_measurement"] == "W")
-			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-			  |> yield(name: "mean")`)
+		loadL2, err := getLoad(influxClient, config.InfluxDB.Org, "l2")
 		if err != nil {
-			log.Fatalf("Error querying InfluxDB: %v", err)
+			log.Fatalf("Error getting loadL2: %v", err)
 		}
 
-		loadL3, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-			from(bucket: "homeassistant")
-			  |> range(start: -1h)
-			  |> filter(fn: (r) => r["entity_id"] == "load_l3")
-			  |> filter(fn: (r) => r["_field"] == "value")
-			  |> filter(fn: (r) => r["_measurement"] == "W")
-			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-			  |> yield(name: "mean")`)
+		loadL3, err := getLoad(influxClient, config.InfluxDB.Org, "l3")
 		if err != nil {
-			log.Fatalf("Error querying InfluxDB: %v", err)
+			log.Fatalf("Error getting loadL3: %v", err)
 		}
 
-		pvPower, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-			from(bucket: "homeassistant")
-			  |> range(start: -1h)
-			  |> filter(fn: (r) => r["entity_id"] == "pv_power")
-			  |> filter(fn: (r) => r["_field"] == "value")
-			  |> filter(fn: (r) => r["_measurement"] == "W")
-			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-			  |> yield(name: "mean")`)
+		pvPower, err := getPvPower(influxClient, config.InfluxDB.Org)
 		if err != nil {
-			log.Fatalf("Error querying InfluxDB: %v", err)
+			log.Fatalf("Error getting pvPower: %v", err)
 		}
 
-		tuvTemp, err := queryInfluxDB(influxClient, config.InfluxDB.Org, `
-			from(bucket: "homeassistant")
-			  |> range(start: -1h)
-			  |> filter(fn: (r) => r["domain"] == "sensor")
-			  |> filter(fn: (r) => r["entity_id"] == "shellyplus1_e465b842dc6c_temperature_2")
-			  |> filter(fn: (r) => r["_field"] == "value")
-			  |> filter(fn: (r) => r["_measurement"] == "°C")
-			  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
-			  |> yield(name: "mean")`)
+		tuvTemp, err := getTuvTemp(influxClient, config.InfluxDB.Org)
 		if err != nil {
-			log.Fatalf("Error querying InfluxDB: %v", err)
+			log.Fatalf("Error getting tuvTemp: %v", err)
 		}
 
 		var turnOnAction action = "TurnOn"
@@ -189,20 +209,10 @@ func main() {
 		}
 		tuvPlugState := plugIsOn(tuvPlugInfo)
 
-		const (
-			maxTemp   = 67
-			maxLoad   = 3000
-			minTuvSoC = 40
-			minPanels = 2000
-			maxSoC    = 100
-			maxSoCNil = 0
-			loadIdle  = 1000
-		)
-
-		if (!tuvPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL3 < loadIdle && tuvTemp < maxTemp) ||
-			(tuvPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL3 < maxLoad && pvPower > minPanels && tuvTemp < maxTemp) ||
-			(!tuvPlugState && batterySoC > minTuvSoC && loadL3 < loadIdle && pvPower > minPanels && tuvTemp < maxTemp) ||
-			(tuvPlugState && batterySoC > minTuvSoC && loadL3 < maxLoad && pvPower > minPanels && tuvTemp < maxTemp) {
+		if (!tuvPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL3 < config.Thresholds.LoadIdle && tuvTemp < config.Thresholds.MaxTemp) ||
+			(tuvPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) ||
+			(!tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) ||
+			(tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) {
 			log.Printf("TUV: ON - PlugState: %v, SoC: %.1f, L3 Load: %.0f, Temp: %.1f, Panels: %.0f\n", tuvPlugState, batterySoC, loadL3, tuvTemp, pvPower)
 			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
 			if err != nil {
@@ -229,14 +239,10 @@ func main() {
 		}
 		heaterPlugState := plugIsOn(heaterPlugInfo)
 
-		const (
-			minHeaterSoC = 60
-		)
-
-		if (!tuvPlugState && !heaterPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL2 < loadIdle) ||
-			(!tuvPlugState && heaterPlugState && (batterySoC == maxSoCNil || batterySoC == maxSoC) && loadL2 < maxLoad && pvPower > minPanels) ||
-			(!tuvPlugState && !heaterPlugState && batterySoC > minHeaterSoC && loadL2 < loadIdle && pvPower > minPanels) ||
-			(!tuvPlugState && heaterPlugState && batterySoC > minHeaterSoC && loadL2 < maxLoad && pvPower > minPanels) {
+		if (!tuvPlugState && !heaterPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL2 < config.Thresholds.LoadIdle) ||
+			(!tuvPlugState && heaterPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels) ||
+			(!tuvPlugState && !heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels) ||
+			(!tuvPlugState && heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels) {
 			log.Printf("HEATER: ON - PlugState: %v, SoC: %.1f, L2 Load: %.0f, Panels: %.0f\n", heaterPlugState, batterySoC, loadL2, pvPower)
 			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
 			if err != nil {
