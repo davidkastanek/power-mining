@@ -5,7 +5,7 @@ influxdb:
   bucket: homeassistant
 tapo:
   email: kastanekdavid@gmail.com
-  pass: gQ0$zCN9F@5sdk
+  password: gQ0$zCN9F@5sdk
   plugs:
     - name: heater
       ip: 192.168.88.111
