@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"github.com/achetronic/tapogo/api/types"
 	"github.com/achetronic/tapogo/pkg/tapogo"
+	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
 	"os"
 	"time"
 
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -183,8 +183,11 @@ func getConfigFromYaml(filename string) (*Config, error) {
 
 func main() {
 	log.SetFormatter(&log.TextFormatter{
-		FullTimestamp: true,
+		FullTimestamp:          true,
+		TimestampFormat:        "2006-01-02 15:04:05",
+		DisableLevelTruncation: true,
 	})
+	log.SetLevel(log.DebugLevel)
 
 	config, err := getConfigFromYaml("config.yaml")
 	if err != nil {
@@ -200,10 +203,10 @@ func main() {
 			log.Fatalf("Error getting batterySoC: %v", err)
 		}
 
-		//loadL2, err := getLoad(influxClient, config.InfluxDB.Org, "l2")
-		//if err != nil {
-		//	log.Fatalf("Error getting loadL2: %v", err)
-		//}
+		loadL2, err := getLoad(influxClient, config.InfluxDB.Org, "l2")
+		if err != nil {
+			log.Fatalf("Error getting loadL2: %v", err)
+		}
 
 		loadL3, err := getLoad(influxClient, config.InfluxDB.Org, "l3")
 		if err != nil {
@@ -239,33 +242,44 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error getting device info: %v", err)
 		}
-		tuvPlugState := plugIsOn(tuvPlugInfo)
 
-		if (!tuvPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL3 < config.Thresholds.LoadIdle && tuvTemp < config.Thresholds.MaxTemp && string1Voltage > config.Thresholds.Panels1Idle) ||
-			(tuvPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp && string1Voltage > config.Thresholds.Panels1Idle) ||
-			(!tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp && string1Voltage > config.Thresholds.Panels1Min) ||
-			(tuvPlugState && batterySoC > config.Thresholds.MinTuvSoC && loadL3 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && tuvTemp < config.Thresholds.MaxTemp) {
-			log.WithFields(log.Fields{
-				"PlugState": tuvPlugState,
-				"SoC":       fmt.Sprintf("%.1f", batterySoC),
-				"L3 Load":   fmt.Sprintf("%.0f", loadL3),
-				"Temp":      fmt.Sprintf("%.1f", tuvTemp),
-				"Panels":    fmt.Sprintf("%.0f", pvPower),
-				"S1Voltage": fmt.Sprintf("%.0f", string1Voltage),
-			}).Info("TUV: ON")
+		isTuvPlugOn := plugIsOn(tuvPlugInfo)
+		isBatteryAtMax := batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC
+		isTuvCold := tuvTemp < config.Thresholds.MaxTemp
+		isL3LoadLow := loadL3 < config.Thresholds.LoadIdle
+		isL3LoadWithinLimit := loadL3 < config.Thresholds.MaxLoad
+		isSunShining := string1Voltage > config.Thresholds.Panels1Idle
+		isSunShiningEnough := pvPower > config.Thresholds.MinPanels
+		isDayTime := string1Voltage > config.Thresholds.Panels1Min
+
+		shouldTuvTurnOn := (!isTuvPlugOn && isBatteryAtMax && isL3LoadLow && isTuvCold && isSunShining) ||
+			(isTuvPlugOn && isBatteryAtMax && isL3LoadWithinLimit && isSunShiningEnough && isTuvCold && isSunShining) ||
+			(!isTuvPlugOn && batterySoC > config.Thresholds.MinTuvSoC && isL3LoadLow && isSunShiningEnough && isTuvCold && isDayTime) ||
+			(isTuvPlugOn && batterySoC > config.Thresholds.MinTuvSoC && isL3LoadWithinLimit && isSunShiningEnough && isTuvCold)
+
+		fields := log.Fields{
+			"batterySoC":          fmt.Sprintf("%.1f", batterySoC),
+			"loadL3":              fmt.Sprintf("%.0f", loadL3),
+			"tuvTemp":             fmt.Sprintf("%.1f", tuvTemp),
+			"Panels":              fmt.Sprintf("%.0f", pvPower),
+			"string1Voltage":      fmt.Sprintf("%.0f", string1Voltage),
+			"isTuvPlugOn":         isTuvPlugOn,
+			"isBatteryAtMax":      isBatteryAtMax,
+			"isTuvCold":           isTuvCold,
+			"isL3LoadLow":         isL3LoadLow,
+			"isL3LoadWithinLimit": isL3LoadWithinLimit,
+			"isSunShining":        isSunShining,
+			"isDayTime":           isDayTime,
+		}
+
+		if shouldTuvTurnOn {
+			log.WithFields(fields).Debug("TUV: ON")
 			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.WithFields(log.Fields{
-				"PlugState": tuvPlugState,
-				"SoC":       fmt.Sprintf("%.1f", batterySoC),
-				"L3 Load":   fmt.Sprintf("%.0f", loadL3),
-				"Temp":      fmt.Sprintf("%.1f", tuvTemp),
-				"Panels":    fmt.Sprintf("%.0f", pvPower),
-				"S1Voltage": fmt.Sprintf("%.0f", string1Voltage),
-			}).Info("TUV: OFF")
+			log.WithFields(fields).Debug("TUV: OFF")
 			_, err = controlPlug(turnOffAction, tuvPlugCredentials, cooldown)
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
@@ -274,46 +288,52 @@ func main() {
 
 		time.Sleep(60 * time.Second)
 
-		//var heaterPlugCredentials = plugCredentials{
-		//	ip:       config.Tapo.Plugs[0].IP,
-		//	email:    config.Tapo.Email,
-		//	password: config.Tapo.Password,
-		//}
-		//heaterPlugInfo, err := controlPlug(deviceInfoAction, heaterPlugCredentials, cooldown)
-		//if err != nil {
-		//	log.Fatalf("Error getting device info: %v", err)
-		//}
-		//heaterPlugState := plugIsOn(heaterPlugInfo)
-		//
-		//if (!tuvPlugState && !heaterPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL2 < config.Thresholds.LoadIdle && string1Voltage > config.Thresholds.Panels1Idle) ||
-		//	(!tuvPlugState && heaterPlugState && (batterySoC == config.Thresholds.MaxSoCNil || batterySoC == config.Thresholds.MaxSoC) && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels && string1Voltage > config.Thresholds.Panels1Idle) ||
-		//	(!tuvPlugState && !heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.LoadIdle && pvPower > config.Thresholds.MinPanels && string1Voltage > config.Thresholds.Panels1Min) ||
-		//	(!tuvPlugState && heaterPlugState && batterySoC > config.Thresholds.MinHeaterSoC && loadL2 < config.Thresholds.MaxLoad && pvPower > config.Thresholds.MinPanels) {
-		//	log.WithFields(log.Fields{
-		//		"PlugState": heaterPlugState,
-		//		"SoC":       fmt.Sprintf("%.1f", batterySoC),
-		//		"L2 Load":   fmt.Sprintf("%.0f", loadL2),
-		//		"Panels":    fmt.Sprintf("%.0f", pvPower),
-		//		"S1Voltage": fmt.Sprintf("%.0f", string1Voltage),
-		//	}).Info("HEATER: ON")
-		//	_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
-		//	if err != nil {
-		//		log.Fatalf("Error turning on plug: %v", err)
-		//	}
-		//} else {
-		//	log.WithFields(log.Fields{
-		//		"PlugState": heaterPlugState,
-		//		"SoC":       fmt.Sprintf("%.1f", batterySoC),
-		//		"L2 Load":   fmt.Sprintf("%.0f", loadL2),
-		//		"Panels":    fmt.Sprintf("%.0f", pvPower),
-		//		"S1Voltage": fmt.Sprintf("%.0f", string1Voltage),
-		//	}).Info("HEATER: OFF")
-		//	_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
-		//	if err != nil {
-		//		log.Fatalf("Error turning off plug: %v", err)
-		//	}
-		//}
+		var heaterPlugCredentials = plugCredentials{
+			ip:       config.Tapo.Plugs[0].IP,
+			email:    config.Tapo.Email,
+			password: config.Tapo.Password,
+		}
+		heaterPlugInfo, err := controlPlug(deviceInfoAction, heaterPlugCredentials, cooldown)
+		if err != nil {
+			log.Fatalf("Error getting device info: %v", err)
+		}
+		isHeaterPlugOn := plugIsOn(heaterPlugInfo)
+		isL2LoadLow := loadL2 < config.Thresholds.LoadIdle
+		isL2LoadWithinLimit := loadL2 < config.Thresholds.MaxLoad
 
-		//time.Sleep(60 * time.Second)
+		shouldHeaterTurnOn := (!isTuvPlugOn && !isHeaterPlugOn && isBatteryAtMax && isL2LoadLow && isSunShining) ||
+			(!isTuvPlugOn && isHeaterPlugOn && isBatteryAtMax && isL2LoadWithinLimit && isSunShiningEnough && isSunShining) ||
+			(!isTuvPlugOn && !isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadLow && isSunShiningEnough && isDayTime) ||
+			(!isTuvPlugOn && isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadWithinLimit && isSunShiningEnough)
+
+		fields = log.Fields{
+			"batterySoC":          fmt.Sprintf("%.1f", batterySoC),
+			"loadL2":              fmt.Sprintf("%.0f", loadL2),
+			"Panels":              fmt.Sprintf("%.0f", pvPower),
+			"string1Voltage":      fmt.Sprintf("%.0f", string1Voltage),
+			"isTuvPlugOn":         isTuvPlugOn,
+			"isHeaterPlugOn":      isHeaterPlugOn,
+			"isBatteryAtMax":      isBatteryAtMax,
+			"isL2LoadLow":         isL2LoadLow,
+			"isL2LoadWithinLimit": isL2LoadWithinLimit,
+			"isSunShining":        isSunShining,
+			"isDayTime":           isDayTime,
+		}
+
+		if shouldHeaterTurnOn {
+			log.WithFields(fields).Debug("HEATER: ON")
+			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
+			if err != nil {
+				log.Fatalf("Error turning on plug: %v", err)
+			}
+		} else {
+			log.WithFields(fields).Debug("HEATER: OFF")
+			_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
+			if err != nil {
+				log.Fatalf("Error turning off plug: %v", err)
+			}
+		}
+
+		time.Sleep(60 * time.Second)
 	}
 }
