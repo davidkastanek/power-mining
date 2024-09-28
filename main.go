@@ -54,7 +54,9 @@ func controlPlug(action action, credentials plugCredentials, cooldown time.Durat
 	for {
 		plug, err := tapogo.NewTapo(credentials.ip, credentials.email, credentials.password, &tapogo.TapoOptions{})
 		if err != nil {
-			return nil, fmt.Errorf("failed to connect to plug: %w", err)
+			time.Sleep(cooldown * time.Second)
+			continue
+			//return nil, fmt.Errorf("failed to connect to plug: %w", err)
 		}
 
 		switch action {
@@ -186,8 +188,17 @@ func main() {
 		FullTimestamp:          true,
 		TimestampFormat:        "2006-01-02 15:04:05",
 		DisableLevelTruncation: true,
+		DisableColors:          true,
+		DisableSorting:         true,
+		DisableQuote:           true,
 	})
 	log.SetLevel(log.DebugLevel)
+	const (
+		Green = "\033[32m"
+		Red   = "\033[31m"
+		White = "\033[97m"
+		Reset = "\033[0m"
+	)
 
 	config, err := getConfigFromYaml("config.yaml")
 	if err != nil {
@@ -273,14 +284,16 @@ func main() {
 		}
 
 		if shouldTuvTurnOn {
-			log.WithFields(fields).Debug("TUV: ON")
+			log.WithFields(fields).Debugf("%sTUV: %sON%s", White, Green, Reset)
 			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
+			isTuvPlugOn = true
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.WithFields(fields).Debug("TUV: OFF")
+			log.WithFields(fields).Debugf("%sTUV: %sOFF%s", White, Red, Reset)
 			_, err = controlPlug(turnOffAction, tuvPlugCredentials, cooldown)
+			isTuvPlugOn = false
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
 			}
@@ -303,8 +316,8 @@ func main() {
 
 		shouldHeaterTurnOn := (!isTuvPlugOn && !isHeaterPlugOn && isBatteryAtMax && isL2LoadLow && isSunShining) ||
 			(!isTuvPlugOn && isHeaterPlugOn && isBatteryAtMax && isL2LoadWithinLimit && isSunShiningEnough && isSunShining) ||
-			(!isTuvPlugOn && !isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadLow && isSunShiningEnough && isDayTime) ||
-			(!isTuvPlugOn && isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadWithinLimit && isSunShiningEnough)
+			(!isTuvPlugOn && !isTuvCold && !isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadLow && isSunShiningEnough && isDayTime) ||
+			(!isTuvPlugOn && !isTuvCold && isHeaterPlugOn && batterySoC > config.Thresholds.MinHeaterSoC && isL2LoadWithinLimit && isSunShiningEnough)
 
 		fields = log.Fields{
 			"batterySoC":          fmt.Sprintf("%.1f", batterySoC),
@@ -321,14 +334,16 @@ func main() {
 		}
 
 		if shouldHeaterTurnOn {
-			log.WithFields(fields).Debug("HEATER: ON")
+			log.WithFields(fields).Debugf("%sHEATER: %sON%s", White, Green, Reset)
 			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
+			isHeaterPlugOn = true
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.WithFields(fields).Debug("HEATER: OFF")
+			log.WithFields(fields).Debugf("%sHEATER: %sOFF%s", White, Red, Reset)
 			_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
+			isHeaterPlugOn = false
 			if err != nil {
 				log.Fatalf("Error turning off plug: %v", err)
 			}
