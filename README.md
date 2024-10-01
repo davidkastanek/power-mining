@@ -34,9 +34,11 @@ healthcheckPort: <healthcheck-port>
 ```
 Feel free to adjust the values for thresholds for your setup.
 ### Build
-Run `go build .` to generate the executable
+Run `go build .` to generate the executable (`power-mining` for mac/unix, `power-mining.exe` for windows)
 ### Run
-Run the script using `go run .` or click the executable
+- `go run .`
+- `./power-mining`
+- `./power-mining -log-to-file=power-mining.log` for logging into file
 
 ## Health Check
 There is an endpoint `:<healthcheck-port>/health` to check whether the script is running or not

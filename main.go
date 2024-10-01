@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"github.com/achetronic/tapogo/api/types"
 	"github.com/achetronic/tapogo/pkg/tapogo"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
+	"io"
 	"net/http"
 	"os"
 	"time"
@@ -41,7 +43,7 @@ type Config struct {
 		Panels1Idle  float64 `yaml:"panels1Idle"`
 		Panels1Min   float64 `yaml:"panels1Min"`
 	}
-	HealthCheckPort string `yaml:"healthCheckPort"`
+	HealthCheckPort int `yaml:"healthCheckPort"`
 }
 
 type plugCredentials struct {
@@ -185,7 +187,7 @@ func getConfigFromYaml(filename string) (*Config, error) {
 	return &config, nil
 }
 
-func startHealthCheck(port string) {
+func startHealthCheck(port int) {
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, err := fmt.Fprintln(w, "OK")
@@ -194,12 +196,22 @@ func startHealthCheck(port string) {
 		}
 	})
 
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), nil); err != nil {
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil); err != nil {
 		log.Fatalf("Error starting health check server on port %s: %v", port, err)
 	}
 }
 
 func main() {
+	logToFile := flag.String("log-to-file", "", "Log output to file at provided location")
+	flag.Parse()
+	if *logToFile != "" {
+		file, err := os.OpenFile(*logToFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Fatalf("error opening log file: %v", err)
+		}
+		log.SetOutput(io.MultiWriter(os.Stdout, file))
+	}
+
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:          true,
 		TimestampFormat:        "2006-01-02 15:04:05",
