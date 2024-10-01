@@ -22,3 +22,4 @@ thresholds:
   minHeaterSoC: 60 # min SoC percentage for power being considered to be sent to the air heater
   panels1Idle: 510 # min voltage on string 1 for panels to be idle when sun is shining
   panels1Min: 300 # min voltage on string 1 for panels when sun is shining
+healthcheckPort: 6778

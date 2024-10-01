@@ -7,6 +7,7 @@ import (
 	"github.com/achetronic/tapogo/pkg/tapogo"
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v3"
+	"net/http"
 	"os"
 	"time"
 
@@ -40,6 +41,7 @@ type Config struct {
 		Panels1Idle  float64 `yaml:"panels1Idle"`
 		Panels1Min   float64 `yaml:"panels1Min"`
 	}
+	HealthCheckPort string `yaml:"healthCheckPort"`
 }
 
 type plugCredentials struct {
@@ -183,6 +185,20 @@ func getConfigFromYaml(filename string) (*Config, error) {
 	return &config, nil
 }
 
+func startHealthCheck(port string) {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := fmt.Fprintln(w, "OK")
+		if err != nil {
+			log.Fatalf("Error writing response body: %v", err)
+		}
+	})
+
+	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), nil); err != nil {
+		log.Fatalf("Error starting health check server on port %s: %v", port, err)
+	}
+}
+
 func main() {
 	log.SetFormatter(&log.TextFormatter{
 		FullTimestamp:          true,
@@ -204,6 +220,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to parse YAML: %v", err)
 	}
+
+	go startHealthCheck(config.HealthCheckPort)
 
 	influxClient := influxdb2.NewClient(config.InfluxDB.URL, config.InfluxDB.Token)
 	defer influxClient.Close()
