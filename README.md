@@ -34,7 +34,8 @@ healthcheckPort: <healthcheck-port>
 ```
 Feel free to adjust the values for thresholds for your setup.
 ### Build
-Run `go build .` to generate the executable (`power-mining` for mac/unix, `power-mining.exe` for windows)
+1. Run `go build .` to generate the executable (`power-mining` for mac/unix, `power-mining.exe` for windows)
+1. Run `docker build -t power-mining-builder .` and then run `docker run --rm -v "$(pwd):/output" power-mining-builder cp /app/power-mining /output/` to get built executable from container to your machine
 ### Run
 - `go run .`
 - `./power-mining`
