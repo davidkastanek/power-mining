@@ -221,12 +221,6 @@ func main() {
 		DisableQuote:           true,
 	})
 	log.SetLevel(log.DebugLevel)
-	const (
-		Green = "\033[32m"
-		Red   = "\033[31m"
-		White = "\033[97m"
-		Reset = "\033[0m"
-	)
 
 	config, err := getConfigFromYaml("config.yaml")
 	if err != nil {
@@ -314,14 +308,14 @@ func main() {
 		}
 
 		if shouldTuvTurnOn {
-			log.WithFields(fields).Debugf("%sTUV: %sON%s", White, Green, Reset)
+			log.WithFields(fields).Debug("TUV: ON")
 			_, err = controlPlug(turnOnAction, tuvPlugCredentials, cooldown)
 			isTuvPlugOn = true
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.WithFields(fields).Debugf("%sTUV: %sOFF%s", White, Red, Reset)
+			log.WithFields(fields).Debug("TUV: OFF")
 			_, err = controlPlug(turnOffAction, tuvPlugCredentials, cooldown)
 			isTuvPlugOn = false
 			if err != nil {
@@ -364,14 +358,14 @@ func main() {
 		}
 
 		if shouldHeaterTurnOn {
-			log.WithFields(fields).Debugf("%sHEATER: %sON%s", White, Green, Reset)
+			log.WithFields(fields).Debug("HEATER: ON")
 			_, err = controlPlug(turnOnAction, heaterPlugCredentials, cooldown)
 			isHeaterPlugOn = true
 			if err != nil {
 				log.Fatalf("Error turning on plug: %v", err)
 			}
 		} else {
-			log.WithFields(fields).Debugf("%sHEATER: %sOFF%s", White, Red, Reset)
+			log.WithFields(fields).Debug("HEATER: OFF")
 			_, err = controlPlug(turnOffAction, heaterPlugCredentials, cooldown)
 			isHeaterPlugOn = false
 			if err != nil {
